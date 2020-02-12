@@ -76,6 +76,16 @@ def read_uci(dataset,stats=False):
         print(dataset,X.shape,len(labels),freq.min()/freq.max(),freq)
     return shuffle(X,Y,random_state=42)
 
+from scipy.io import loadmat
+from sklearn.preprocessing import LabelEncoder
+def load_mat(name):
+    mat = loadmat('benchmarks.mat')
+    X = mat[name][0][0][0]
+    Y = mat[name][0][0][1].reshape(-1)
+    Y = LabelEncoder().fit_transform(Y)
+    X = MinMaxScaler().fit_transform(X)
+    return X,Y
+
 from collections import defaultdict
 import numpy as np
 import pandas as pd
