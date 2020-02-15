@@ -75,8 +75,14 @@ def load_mat(name):
     X = MinMaxScaler().fit_transform(X)
     return X,Y
 
+from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model._logistic import _logistic_regression_path, _logistic_loss, _intercept_dot
+from sklearn.utils.extmath import log_logistic
+from scipy.optimize import minimize
+from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.utils.multiclass import unique_labels
 
-def log_loss(wp,X,target,C,PN,NP): 
+def log_loss(wp,X,target,C,PN,NP,probP=.5): 
     """wp=Coefficients+Intercept, X=N*M data matrix, Y=N sized target, C=regularization, PN=p+ or % of Positive samples labeled as Negative
     It is minimized using "L-BFGS-B" method of "scipy.optimize.minimize" function, and results in 
     similar coefficients as sklearn's Logistic Regression when PN=NP=0"""
@@ -94,19 +100,33 @@ def log_loss(wp,X,target,C,PN,NP):
     loss = loss/(1-PN-NP) + .5 * (1./C) * np.dot(w, w) #Normalization & regulaqization
     return loss.sum()                             # Final loss
 
-from sklearn.linear_model import LogisticRegression
-from sklearn.linear_model._logistic import _logistic_regression_path, _logistic_loss, _intercept_dot
-from sklearn.utils.extmath import log_logistic
-from scipy.optimize import minimize
-from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.utils.multiclass import unique_labels
+def my_loss(wp,X,target,C,PN,NP,probP): 
+    c = wp[-1]
+    w = wp[:-1]
+    z = np.dot(X,w) + c
+    yz = target * z    #to compute l(t,y)
+    nyz = -target * z  #to compute l(t,-y)
+    ls = -log_logistic(yz)   #l(t,y)
+    nls = -log_logistic(nyz) #l(t,-y)
+    idx = target==1          #indexes of samples w/ P label
+    loss = ls.copy()         #To store l-hat
+    #probP = (target==1).sum()/len(target)
+    probN = 1 - probP
+    deno = ((1-PN)*probP)/((1-PN)*probP+NP*probN)
+    num = ((1-NP)*probN)/((1-NP)*probN+PN*probP)
+    loss[idx] = deno*ls[idx] - PN*nls[idx]     #Modified loss for P samples
+    loss[~idx] = num*ls[~idx] - NP*nls[~idx]  #Modified loss for N samples
+    loss = loss/(1-PN-NP) + .5 * (1./C) * np.dot(w, w) #Normalization & regulaqization
+    return loss.sum()    
 
 class Logit(LogisticRegression,BaseEstimator,ClassifierMixin):
-    def __init__(self,PN=.2, NP=.2, robust=True,C=np.inf,max_iter=100):
+    def __init__(self,PN=.2, NP=.2, robust=True,C=np.inf,max_iter=200,func=log_loss,probP=.5):
         super().__init__(C=C,max_iter=max_iter)
         self.PN = PN
         self.NP = NP
         self.robust= robust
+        self.func = func
+        self.probP = probP
     
     def fit(self,X,y):
         self.classes_ = unique_labels(y)
@@ -114,7 +134,7 @@ class Logit(LogisticRegression,BaseEstimator,ClassifierMixin):
         target = y.copy()
         target[target==0] = -1
         if self.robust:
-            self.r_ = minimize(log_loss,w0,method="L-BFGS-B",args=(X, target, self.C,self.PN,self.NP),
+            self.r_ = minimize(self.func,w0,method="L-BFGS-B",args=(X, target, self.C,self.PN,self.NP,self.probP),
                                options={"maxiter": self.max_iter})
         else:
             self.r_ = minimize(_logistic_loss,w0,method="L-BFGS-B",args=(X, target, self.C),options={"maxiter": self.max_iter})
@@ -132,15 +152,19 @@ class Logit(LogisticRegression,BaseEstimator,ClassifierMixin):
 #         return y
     
 from sklearn.datasets import make_classification
-def linearly_sep2D(n_samples=800):
-    X,y = make_classification(n_samples=200,n_classes=2,n_features=2,n_clusters_per_class=1,
-                          n_informative=2,n_redundant=0,class_sep=1.0,flip_y=0)
-    X = MinMaxScaler().fit_transform(X)
+def linearly_sep2D(n_samples=800,dist=.25):
+#     X,y = make_classification(n_samples=200,n_classes=2,n_features=2,n_clusters_per_class=1,
+#                           n_informative=2,n_redundant=0,class_sep=1.0,flip_y=0)
+#     X = MinMaxScaler().fit_transform(X)
+#     lr = LogisticRegression().fit(X,y)
+    lr = LogisticRegression(penalty='none')
+    lr.coef_ = np.array([[-1.0,1.0]])
+    lr.intercept_ = np.array([0.0])
+    lr.classes_ = np.array([0,1])
     Xp = np.random.uniform(size=(n_samples,2))
-    lr = LogisticRegression().fit(X,y)
     yp = lr.predict(Xp)
     d = lr.decision_function(Xp)
-    idx = ((d>.5) | (d<-.5))
+    idx = ((d>dist) | (d<-dist))
     return Xp[idx],yp[idx]
 
 class NoisyEstimator(BaseEstimator,ClassifierMixin):
@@ -151,7 +175,7 @@ class NoisyEstimator(BaseEstimator,ClassifierMixin):
         
     def fit(self,X,Y):
         Yn = create_noise(Y,self.PN,self.NP)
-        print(np.unique(Y,return_counts=True))
+        #print(np.unique(Yn,return_counts=True))
         self.estimator.fit(X,Yn)
         return self
     
