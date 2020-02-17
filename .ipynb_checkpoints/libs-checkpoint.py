@@ -3,6 +3,16 @@ from collections import defaultdict
 from sklearn.utils import check_random_state
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
+def create_noise(y,PN,NP):
+    yn = y.copy()
+    idp = np.argwhere(y==1).ravel()
+    idp = np.random.choice(idp,size=int(len(idp)*PN),replace=False)
+    yn[idp] = 0
+    idp = np.argwhere(y==0).ravel()
+    idp = np.random.choice(idp,size=int(len(idp)*NP),replace=False)
+    yn[idp] = 1
+    return yn
+
 def noisify(Y:np.ndarray,frac:float,random_state=None,sample_weight=None,index=False): #This target_mask may be not needed
     random_state = check_random_state(random_state)
     nns = int(len(Y)*frac)
